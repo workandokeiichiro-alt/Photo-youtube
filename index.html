@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>フォト→YouTube</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#f6f5f2; --card:#fff; --ink:#1d1d1b; --sub:#6b6a66; --line:#e3e1db;
+    --accent:#d9381e; --accent-ink:#fff; --ok:#1f7a4d; --warn:#b26a00; --soft:#f0eee9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#171716; --card:#222220; --ink:#eeede9; --sub:#a3a19b; --line:#3a3936;
+      --accent:#ff5a3c; --accent-ink:#fff; --ok:#4cc38a; --warn:#f0a63a; --soft:#2b2a28; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.6}
+  main{max-width:820px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:22px;margin:4px 0 2px}
+  .lead{color:var(--sub);font-size:13px;margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0}
+  .card h2{font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+  .num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;
+    background:var(--ink);color:var(--bg);font-size:12px}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  label.f{display:block;font-size:12px;color:var(--sub);margin:8px 0 4px}
+  input[type=text],input[type=date],textarea,select{
+    font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;width:100%}
+  textarea{min-height:70px}
+  button{font:inherit;border:1px solid var(--line);background:var(--soft);color:var(--ink);
+    border-radius:9px;padding:9px 14px;cursor:pointer}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .small{font-size:12px;padding:4px 9px}
+  .muted{color:var(--sub);font-size:12px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)}
+  details summary{cursor:pointer;font-size:13px;color:var(--sub)}
+  code{background:var(--soft);padding:1px 5px;border-radius:5px;font-size:12px;word-break:break-all}
+  .list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .item{display:grid;grid-template-columns:auto 120px 1fr auto;gap:10px;align-items:center;
+    border:1px solid var(--line);border-radius:10px;padding:8px}
+  .item.off{opacity:.45}
+  .thumb{width:120px;height:68px;border-radius:7px;background:var(--soft);object-fit:cover}
+  .meta{font-size:13px;min-width:0}
+  .meta .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{display:inline-block;font-size:11px;padding:0 6px;border-radius:5px;background:var(--soft);color:var(--warn);margin-left:4px}
+  .ord{display:flex;flex-direction:column;gap:4px}
+  progress{width:100%;height:10px}
+  video{width:100%;border-radius:10px;margin-top:10px;background:#000;max-height:420px}
+  pre{white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto;background:var(--soft);padding:8px;border-radius:8px}
+  @media (max-width:560px){
+    .item{grid-template-columns:auto 84px 1fr;}
+    .thumb{width:84px;height:48px}
+    .ord{grid-column:1/-1;flex-direction:row;justify-content:flex-end}
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>フォト → YouTube</h1>
+  <p class="lead">Googleフォトから動画を選び、1本につなげてYouTubeにアップします。処理はすべてこのブラウザ内で行います。</p>
+
+  <details class="card" id="settingsBox">
+    <summary>初期設定(OAuthクライアントID)</summary>
+    <label class="f">OAuth クライアントID(ウェブアプリケーション)</label>
+    <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
+    <p class="muted">Google Cloud の「承認済みの JavaScript 生成元」には次を登録してください:<br><code id="originText"></code></p>
+    <button class="small" id="saveClient">保存</button> <span id="saveMsg" class="muted"></span>
+  </details>
+
+  <section class="card">
+    <h2><span class="num">1</span>日付と動画を選ぶ</h2>
+    <div class="row">
+      <div style="flex:0 0 180px"><label class="f">撮影日</label><input type="date" id="date"></div>
+      <div style="flex:1"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="loginBtn">Googleにログイン</button>
+      <button class="primary" id="pickBtn" disabled>Googleフォトから選ぶ</button>
+      <span id="authMsg" class="muted"></span>
+    </div>
+    <p class="muted" style="margin-bottom:0">選択画面が別ウィンドウで開きます。その日付までスクロールして動画を選び「完了」を押してください(写真は自動で除外されます)。</p>
+    <p id="pickMsg" class="muted"></p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">2</span>つなげる順番</h2>
+    <div class="row">
+      <button class="small" id="sortBtn">撮影時刻順に並べる</button>
+      <button class="small" id="clearBtn">すべてクリア</button>
+      <span id="countMsg" class="muted"></span>
+    </div>
+    <div class="list" id="list"><p class="muted">まだ動画がありません。</p></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">3</span>1本の動画にする</h2>
+    <label class="f">つなげ方</label>
+    <select id="mode">
+      <option value="copy">そのまま連結(高速・画質そのまま/同じ端末・同じ設定で撮った動画向け)</option>
+      <option value="encode">画質をそろえて連結(低速/向きや端末が混ざっている場合)</option>
+    </select>
+    <div id="encodeOpts" style="display:none">
+      <label class="f">出力サイズ</label>
+      <select id="orient">
+        <option value="h">横長 1280×720</option>
+        <option value="v">縦長 720×1280</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="buildBtn" disabled>動画を作る</button>
+    </div>
+    <div id="buildProg" style="display:none;margin-top:10px">
+      <progress id="bar" max="1" value="0"></progress>
+      <div id="buildMsg" class="muted"></div>
+    </div>
+    <video id="preview" controls playsinline style="display:none"></video>
+    <p id="dlWrap" class="muted" style="display:none"><a id="dlLink" download="video.mp4">動画を端末に保存</a></p>
+  </section>
+
+  <section class="card">
+    <h2><span class="num">4</span>YouTubeにアップ</h2>
+    <label class="f">タイトル</label>
+    <input type="text" id="title">
+    <label class="f">説明(任意)</label>
+    <textarea id="desc"></textarea>
+    <label class="f">公開設定</label>
+    <select id="privacy">
+      <option value="private">非公開</option>
+      <option value="unlisted">限定公開</option>
+      <option value="public">公開</option>
+    </select>
+    <p class="muted">※Googleの審査を受けていないアプリからのアップロードは、設定に関わらず非公開になります。必要ならYouTube Studioで変更してください。</p>
+    <div class="row"><button class="primary" id="uploadBtn" disabled>YouTubeにアップ</button></div>
+    <div id="upProg" style="display:none;margin-top:10px">
+      <progress id="upBar" max="1" value="0"></progress>
+      <div id="upMsg" class="muted"></div>
+    </div>
+  </section>
+
+  <details class="card">
+    <summary>処理ログ</summary>
+    <pre id="log"></pre>
+  </details>
+</main>
+
+<script>
+/* ========== 設定 ========== */
+const SCOPES = [
+  'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
+  'https://www.googleapis.com/auth/youtube.upload'
+].join(' ');
+const CORE_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js';
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm';
+const PICKER = 'https://photospicker.googleapis.com/v1';
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k) }catch(_){ return null } },
+  set(k,v){ try{ localStorage.setItem(k,v) }catch(_){} }
+};
+function log(s){ const p=$('log'); p.textContent += s + '\n'; p.scrollTop = p.scrollHeight; }
+function fmtBytes(n){ return n>1e9?(n/1e9).toFixed(2)+'GB':(n/1e6).toFixed(1)+'MB'; }
+function localDate(d){ const z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; }
+
+/* ========== 初期表示 ========== */
+$('originText').textContent = location.origin;
+$('clientId').value = store.get('clientId') || '';
+if(!$('clientId').value) $('settingsBox').open = true;
+$('saveClient').onclick = () => { store.set('clientId', $('clientId').value.trim()); tokenClient=null; $('saveMsg').textContent='保存しました'; };
+$('date').value = localDate(new Date());
+function defaultTitle(){ const [y,m,d]=$('date').value.split('-').map(Number); return y?`${y}年${m}月${d}日`:''; }
+$('title').value = defaultTitle();
+$('date').onchange = () => { $('title').value = defaultTitle(); render(); };
+$('mode').onchange = () => { $('encodeOpts').style.display = $('mode').value==='encode'?'block':'none'; };
+
+/* ========== 認証 ========== */
+let token=null, tokenExp=0, tokenClient=null;
+function getToken(){
+  return new Promise((resolve,reject)=>{
+    if(token && Date.now() < tokenExp-60000) return resolve(token);
+    const cid = ($('clientId').value||'').trim();
+    if(!cid){ $('settingsBox').open=true; return reject(new Error('クライアントIDを設定してください')); }
+    if(!window.google?.accounts?.oauth2) return reject(new Error('Googleログインの読み込み中です。少し待ってから再度押してください'));
+    if(!tokenClient){
+      tokenClient = google.accounts.oauth2.initTokenClient({ client_id:cid, scope:SCOPES, callback:()=>{} });
+    }
+    tokenClient.callback = r => {
+      if(r.error) return reject(new Error(r.error_description||r.error));
+      token=r.access_token; tokenExp=Date.now()+r.expires_in*1000; resolve(token);
+    };
+    tokenClient.error_callback = e => reject(new Error('ログインが中断されました('+(e.type||'')+')'));
+    tokenClient.requestAccessToken({ prompt: token ? '' : 'consent' });
+  });
+}
+$('loginBtn').onclick = async () => {
+  try{
+    await getToken();
+    $('authMsg').innerHTML = '<span class="ok">ログイン済み</span>';
+    $('pickBtn').disabled = false;
+  }catch(e){ $('authMsg').innerHTML = '<span class="warn">'+e.message+'</span>'; }
+};
+
+async function api(url, opt={}){
+  const r = await fetch(url, { ...opt, headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json', ...(opt.headers||{}) } });
+  const text = await r.text();
+  if(!r.ok) throw new Error(`${r.status} ${text}`);
+  return text ? JSON.parse(text) : null;
+}
+
+/* ========== Googleフォト Picker ========== */
+let items = []; // {id, createTime, filename, baseUrl, width, height, include, thumb}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+$('pickBtn').onclick = async () => {
+  // ポップアップブロック回避のため、クリック直後に窓を開いておく
+  const win = window.open('about:blank','gphotos_picker','width=1100,height=800');
+  $('pickBtn').disabled = true;
+  try{
+    if(!token || Date.now() >= tokenExp-60000) throw new Error('ログインの有効期限が切れました。「Googleにログイン」を押し直してください');
+    const session = await api(`${PICKER}/sessions`, { method:'POST', body:'{}' });
+    if(win) win.location = session.pickerUri + '/autoclose';
+    else window.open(session.pickerUri, '_blank');
+    $('pickMsg').textContent = '選択画面で動画を選び「完了」を押してください…';
+    const interval = Math.max(2000, parseFloat(session.pollingConfig?.pollInterval||'5')*1000);
+    const deadline = Date.now() + Math.max(60000, parseFloat(session.pollingConfig?.timeoutIn||'1800')*1000);
+    let s = session;
+    while(!s.mediaItemsSet){
+      if(Date.now() > deadline) throw new Error('選択がタイムアウトしました');
+      await sleep(interval);
+      s = await api(`${PICKER}/sessions/${session.id}`);
+    }
+    // 選ばれたアイテムを取得
+    let picked=[], pageToken='';
+    do{
+      const q = new URLSearchParams({ sessionId:session.id, pageSize:'100' });
+      if(pageToken) q.set('pageToken', pageToken);
+      const res = await api(`${PICKER}/mediaItems?${q}`);
+      picked = picked.concat(res.mediaItems || res.pickedMediaItems || []);
+      pageToken = res.nextPageToken || '';
+    }while(pageToken);
+    api(`${PICKER}/sessions/${session.id}`, { method:'DELETE' }).catch(()=>{});
+
+    const videos = picked.filter(m => m.type==='VIDEO');
+    const skipped = picked.length - videos.length;
+    let added = 0;
+    for(const m of videos){
+      if(items.some(x=>x.id===m.id)) continue;
+      const md = m.mediaFile?.mediaFileMetadata || {};
+      const status = md.videoMetadata?.processingStatus;
+      items.push({ id:m.id, createTime:m.createTime, filename:m.mediaFile?.filename||'video',
+        baseUrl:m.mediaFile?.baseUrl, width:md.width, height:md.height,
+        include: status ? status==='READY' : true, notReady: status && status!=='READY', thumb:null });
+      added++;
+    }
+    items.sort((a,b)=> new Date(a.createTime)-new Date(b.createTime));
+    $('pickMsg').innerHTML = `動画を${added}本追加しました` + (skipped?`(写真${skipped}枚は除外)`:'') +
+      '<br><span class="muted">※選んだ動画のデータは約60分で取得できなくなります。続けて動画を作ってください。</span>';
+    render();
+    loadThumbs();
+  }catch(e){
+    $('pickMsg').innerHTML = '<span class="warn">'+e.message+'</span>';
+    log('picker error: '+e.message);
+    if(win && !win.closed && win.location.href==='about:blank') win.close();
+  }finally{ $('pickBtn').disabled = false; }
+};
+
+async function loadThumbs(){
+  for(const it of items){
+    if(it.thumb || !it.baseUrl) continue;
+    try{
+      const r = await fetch(`${it.baseUrl}=w240-h136-c`, { headers:{ Authorization:'Bearer '+token } });
+      if(r.ok){ it.thumb = URL.createObjectURL(await r.blob()); render(); }
+    }catch(_){}
+  }
+}
+
+/* ========== 一覧表示 ========== */
+function render(){
+  const list = $('list'); list.innerHTML='';
+  const day = $('date').value;
+  if(!items.length){ list.innerHTML='<p class="muted">まだ動画がありません。</p>'; }
+  items.forEach((it,i)=>{
+    const d = new Date(it.createTime);
+    const row = document.createElement('div'); row.className='item'+(it.include?'':' off');
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=it.include;
+    cb.onchange=()=>{ it.include=cb.checked; render(); };
+    const img = document.createElement(it.thumb?'img':'div'); img.className='thumb'; if(it.thumb) img.src=it.thumb;
+    const meta = document.createElement('div'); meta.className='meta';
+    const fn = document.createElement('div'); fn.className='fn'; fn.textContent = it.filename;
+    const sub = document.createElement('div'); sub.className='muted';
+    sub.textContent = `${d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` +
+      (it.width?` ・ ${it.width}×${it.height}`:'');
+    if(day && localDate(d)!==day){ const b=document.createElement('span'); b.className='badge'; b.textContent='別の日'; sub.appendChild(b); }
+    if(it.notReady){ const b=document.createElement('span'); b.className='badge'; b.textContent='処理中'; sub.appendChild(b); }
+    meta.append(fn, sub);
+    const ord = document.createElement('div'); ord.className='ord';
+    const up = document.createElement('button'); up.className='small'; up.textContent='↑'; up.disabled=i===0;
+    up.onclick=()=>{ [items[i-1],items[i]]=[items[i],items[i-1]]; render(); };
+    const dn = document.createElement('button'); dn.className='small'; dn.textContent='↓'; dn.disabled=i===items.length-1;
+    dn.onclick=()=>{ [items[i+1],items[i]]=[items[i],items[i+1]]; render(); };
+    ord.append(up,dn);
+    row.append(cb,img,meta,ord); list.appendChild(row);
+  });
+  const n = items.filter(x=>x.include).length;
+  $('countMsg').textContent = items.length ? `${n} / ${items.length} 本を使用` : '';
+  $('buildBtn').disabled = n===0;
+}
+$('sortBtn').onclick = () => { items.sort((a,b)=> new Date(a.createTime)-new Date(b.createTime)); render(); };
+$('clearBtn').onclick = () => { items.forEach(it=>it.thumb&&URL.revokeObjectURL(it.thumb)); items=[]; render(); };
+
+/* ========== ffmpeg(ブラウザ内) ========== */
+const WORKER_SRC = `
+let core=null;
+self.onmessage = async (e) => {
+  const { id, cmd, args } = e.data;
+  try{
+    let result=null, transfer=[];
+    if(cmd==='init'){
+      importScripts(args.coreURL);
+      core = await self.createFFmpegCore({ mainScriptUrlOrBlob: args.coreURL + '#' + btoa(JSON.stringify({ wasmURL: args.wasmURL })) });
+      core.setLogger(d => self.postMessage({ type:'log', message:d.message }));
+      core.setProgress(d => self.postMessage({ type:'progress', progress:d.progress, time:d.time }));
+    }else if(cmd==='write'){ core.FS.writeFile(args.name, args.data); }
+    else if(cmd==='exec'){ core.setTimeout(-1); core.exec(...args.argv); result=core.ret; core.reset(); }
+    else if(cmd==='read'){ const d=core.FS.readFile(args.name); result=d; transfer=[d.buffer]; }
+    else if(cmd==='delete'){ try{ core.FS.unlink(args.name); }catch(_){} }
+    self.postMessage({ id, ok:true, result }, transfer);
+  }catch(err){ self.postMessage({ id, ok:false, error:String((err&&err.message)||err) }); }
+};`;
+let ffWorker=null, ffSeq=0; const ffPending=new Map(); let ffLogHook=null;
+function ff(cmd,args={},transfer=[]){
+  return new Promise((res,rej)=>{ const id=++ffSeq; ffPending.set(id,{res,rej}); ffWorker.postMessage({id,cmd,args},transfer); });
+}
+async function ffInit(){
+  if(ffWorker) return;
+  ffWorker = new Worker(URL.createObjectURL(new Blob([WORKER_SRC],{type:'text/javascript'})));
+  ffWorker.onmessage = e => {
+    const m=e.data;
+    if(m.type==='log'){ log(m.message); ffLogHook && ffLogHook(m.message); return; }
+    if(m.type==='progress') return;
+    const p=ffPending.get(m.id); if(!p) return; ffPending.delete(m.id);
+    m.ok ? p.res(m.result) : p.rej(new Error(m.error));
+  };
+  ffWorker.onerror = e => { for(const p of ffPending.values()) p.rej(new Error(e.message||'worker error')); ffPending.clear(); };
+  await ff('init',{ coreURL:CORE_URL, wasmURL:WASM_URL });
+}
+async function ffReset(){ if(ffWorker){ ffWorker.terminate(); ffWorker=null; ffPending.clear(); } }
+
+async function download(url, onp){
+  const r = await fetch(url, { headers:{ Authorization:'Bearer '+token } });
+  if(!r.ok) throw new Error(`ダウンロード失敗 ${r.status}`);
+  const total = +r.headers.get('content-length') || 0;
+  const reader = r.body.getReader(); const chunks=[]; let got=0;
+  for(;;){ const {done,value}=await reader.read(); if(done) break; chunks.push(value); got+=value.length; onp(got,total); }
+  const out = new Uint8Array(got); let o=0; for(const c of chunks){ out.set(c,o); o+=c.length; }
+  return out;
+}
+
+async function probe(name){
+  let txt='';
+  ffLogHook = m => { txt += m + '\n'; };
+  await ff('exec',{ argv:['-hide_banner','-i',name] });
+  ffLogHook = null;
+  const dm = txt.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+  const dur = dm ? (+dm[1])*3600 + (+dm[2])*60 + parseFloat(dm[3]) : 0;
+  return { dur, hasAudio: /Stream #\d+:\d+.*Audio:/.test(txt) };
+}
+
+let outBlob=null, outUrl=null;
+function setBuild(v,msg){ $('bar').value=v; $('buildMsg').textContent=msg; }
+
+$('buildBtn').onclick = async () => {
+  const sel = items.filter(x=>x.include);
+  if(!sel.length) return;
+  if(!token || Date.now() >= tokenExp-60000){ alert('ログインの有効期限が切れました。「Googleにログイン」を押し直してください'); return; }
+  $('buildBtn').disabled=true; $('uploadBtn').disabled=true; $('buildProg').style.display='block';
+  $('preview').style.display='none'; $('dlWrap').style.display='none';
+  try{
+    setBuild(0,'変換エンジンを準備中…(初回は30MBほど読み込みます)');
+    await ffReset(); await ffInit();
+
+    let totalBytes=0;
+    for(let i=0;i<sel.length;i++){
+      const data = await download(`${sel[i].baseUrl}=dv`, (g,t)=>{
+        setBuild((i + (t? g/t : 0.5))/sel.length*0.5, `ダウンロード中 ${i+1}/${sel.length} … ${fmtBytes(g)}${t?' / '+fmtBytes(t):''}`);
+      });
+      totalBytes += data.length;
+      await ff('write',{ name:`in${i}.mp4`, data }, [data.buffer]);
+    }
+    log(`合計 ${fmtBytes(totalBytes)}`);
+    if(totalBytes > 1.6e9) log('※合計サイズが大きいため、メモリ不足で失敗する可能性があります');
+
+    let ret;
+    if($('mode').value==='copy'){
+      setBuild(0.6,'連結中…');
+      const list = sel.map((_,i)=>`file 'in${i}.mp4'`).join('\n');
+      await ff('write',{ name:'list.txt', data:new TextEncoder().encode(list) });
+      ret = await ff('exec',{ argv:['-hide_banner','-f','concat','-safe','0','-i','list.txt','-c','copy','-movflags','+faststart','out.mp4'] });
+      if(ret!==0) throw new Error('そのまま連結できませんでした(動画の形式が揃っていない可能性)。「画質をそろえて連結」を選んで再実行してください。');
+    }else{
+      setBuild(0.5,'動画情報を確認中…');
+      const info=[]; for(let i=0;i<sel.length;i++) info.push(await probe(`in${i}.mp4`));
+      const totalDur = info.reduce((s,x)=>s+x.dur,0) || 1;
+      const [W,H] = $('orient').value==='v' ? [720,1280] : [1280,720];
+      const argv=['-hide_banner']; let fc=''; let parts='';
+      sel.forEach((_,i)=>argv.push('-i',`in${i}.mp4`));
+      info.forEach((x,i)=>{
+        fc += `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${i}];`;
+        fc += x.hasAudio
+          ? `[${i}:a]aformat=sample_rates=48000:channel_layouts=stereo[a${i}];`
+          : `anullsrc=r=48000:cl=stereo,atrim=duration=${x.dur.toFixed(3)}[a${i}];`;
+        parts += `[v${i}][a${i}]`;
+      });
+      fc += `${parts}concat=n=${sel.length}:v=1:a=1[v][a]`;
+      argv.push('-filter_complex',fc,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','23',
+        '-c:a','aac','-b:a','128k','-movflags','+faststart','out.mp4');
+      ffLogHook = m => {
+        const t = m.match(/time=(\d+):(\d+):([\d.]+)/);
+        if(t){ const s=(+t[1])*3600+(+t[2])*60+parseFloat(t[3]);
+          setBuild(0.5+Math.min(1,s/totalDur)*0.5, `変換中… ${Math.round(s)}秒 / ${Math.round(totalDur)}秒(このタブは開いたままにしてください)`); }
+      };
+      ret = await ff('exec',{ argv });
+      ffLogHook = null;
+      if(ret!==0) throw new Error('変換に失敗しました。処理ログを確認してください。');
+    }
+
+    const out = await ff('read',{ name:'out.mp4' });
+    outBlob = new Blob([out],{type:'video/mp4'});
+    if(outUrl) URL.revokeObjectURL(outUrl);
+    outUrl = URL.createObjectURL(outBlob);
+    $('preview').src = outUrl; $('preview').style.display='block';
+    $('dlLink').href = outUrl; $('dlLink').download = `${$('date').value||'video'}.mp4`; $('dlWrap').style.display='block';
+    setBuild(1, `完成しました(${fmtBytes(outBlob.size)})。プレビューを確認してアップしてください。`);
+    $('uploadBtn').disabled=false;
+    await ffReset(); // メモリ解放
+  }catch(e){
+    setBuild(0, '');
+    $('buildMsg').innerHTML = '<span class="warn">'+e.message+'</span>';
+    log('build error: '+e.message);
+    await ffReset();
+  }finally{ $('buildBtn').disabled=false; }
+};
+
+/* ========== YouTube アップロード ========== */
+$('uploadBtn').onclick = async () => {
+  if(!outBlob) return;
+  $('uploadBtn').disabled=true; $('upProg').style.display='block';
+  const setUp=(v,m)=>{ $('upBar').value=v; $('upMsg').innerHTML=m; };
+  try{
+    await getToken();
+    setUp(0,'アップロード準備中…');
+    const meta = {
+      snippet:{ title: ($('title').value.trim()||defaultTitle()||'動画').slice(0,100), description:$('desc').value, categoryId:'22' },
+      status:{ privacyStatus:$('privacy').value, selfDeclaredMadeForKids:false }
+    };
+    const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',{
+      method:'POST',
+      headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json; charset=UTF-8',
+        'X-Upload-Content-Type':'video/mp4', 'X-Upload-Content-Length':String(outBlob.size) },
+      body: JSON.stringify(meta)
+    });
+    if(!init.ok) throw new Error(`${init.status} ${await init.text()}`);
+    const loc = init.headers.get('Location');
+    if(!loc) throw new Error('アップロード先URLを取得できませんでした');
+    const res = await new Promise((resolve,reject)=>{
+      const x = new XMLHttpRequest();
+      x.open('PUT', loc);
+      x.setRequestHeader('Authorization','Bearer '+token);
+      x.setRequestHeader('Content-Type','video/mp4');
+      x.upload.onprogress = e => { if(e.lengthComputable) setUp(e.loaded/e.total, `アップロード中… ${fmtBytes(e.loaded)} / ${fmtBytes(e.total)}`); };
+      x.onload = () => x.status<300 ? resolve(JSON.parse(x.responseText)) : reject(new Error(`${x.status} ${x.responseText}`));
+      x.onerror = () => reject(new Error('通信エラーが発生しました'));
+      x.send(outBlob);
+    });
+    const url = `https://youtu.be/${res.id}`;
+    const st = res.status?.privacyStatus;
+    setUp(1, `<span class="ok">アップしました:</span> <a href="${url}" target="_blank" rel="noopener">${url}</a>` +
+      (st && st!==$('privacy').value ? `<br><span class="warn">※公開設定は「${st}」になっています(未審査アプリの制限)</span>`:'') +
+      '<br><span class="muted">YouTube側の処理が終わるまで数分かかることがあります。</span>');
+  }catch(e){
+    setUp(0,'<span class="warn">'+e.message+'</span>'); log('upload error: '+e.message);
+    $('uploadBtn').disabled=false;
+  }
+};
+
+render();
+</script>
+</body>
+</html>
