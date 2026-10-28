@@ -68,6 +68,9 @@
     <label class="f">OAuth クライアントID(ウェブアプリケーション)</label>
     <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
     <p class="muted">Google Cloud の「承認済みの JavaScript 生成元」には次を登録してください:<br><code id="originText"></code></p>
+    <label class="f">中継URL(Cloudflare Worker)</label>
+    <input type="text" id="proxyUrl" placeholder="https://photo-proxy.xxxx.workers.dev">
+    <p class="muted">Googleフォトの動画をブラウザで受け取るための中継先です。</p>
     <button class="small" id="saveClient">保存</button> <span id="saveMsg" class="muted"></span>
   </details>
 
@@ -169,8 +172,19 @@ function localDate(d){ const z=n=>String(n).padStart(2,'0'); return `${d.getFull
 /* ========== 初期表示 ========== */
 $('originText').textContent = location.origin;
 $('clientId').value = store.get('clientId') || '';
-if(!$('clientId').value) $('settingsBox').open = true;
-$('saveClient').onclick = () => { store.set('clientId', $('clientId').value.trim()); tokenClient=null; $('saveMsg').textContent='保存しました'; };
+$('proxyUrl').value = store.get('proxyUrl') || '';
+if(!$('clientId').value || !$('proxyUrl').value) $('settingsBox').open = true;
+$('saveClient').onclick = () => {
+  store.set('clientId', $('clientId').value.trim());
+  store.set('proxyUrl', $('proxyUrl').value.trim());
+  tokenClient=null; $('saveMsg').textContent='保存しました';
+};
+// Googleフォトの画像・動画URLを中継経由にする
+function px(u){
+  const p = ($('proxyUrl').value||'').trim().replace(/\/+$/,'');
+  if(!p){ $('settingsBox').open=true; throw new Error('初期設定で中継URLを設定してください'); }
+  return `${p}/?url=${encodeURIComponent(u)}`;
+}
 $('date').value = localDate(new Date());
 function defaultTitle(){ const [y,m,d]=$('date').value.split('-').map(Number); return y?`${y}年${m}月${d}日`:''; }
 $('title').value = defaultTitle();
@@ -272,7 +286,7 @@ async function loadThumbs(){
   for(const it of items){
     if(it.thumb || !it.baseUrl) continue;
     try{
-      const r = await fetch(`${it.baseUrl}=w240-h136-c`, { headers:{ Authorization:'Bearer '+token } });
+      const r = await fetch(px(`${it.baseUrl}=w240-h136-c`), { headers:{ Authorization:'Bearer '+token } });
       if(r.ok){ it.thumb = URL.createObjectURL(await r.blob()); render(); }
     }catch(_){}
   }
@@ -351,8 +365,10 @@ async function ffInit(){
 async function ffReset(){ if(ffWorker){ ffWorker.terminate(); ffWorker=null; ffPending.clear(); } }
 
 async function download(url, onp){
-  const r = await fetch(url, { headers:{ Authorization:'Bearer '+token } });
-  if(!r.ok) throw new Error(`ダウンロード失敗 ${r.status}`);
+  let r;
+  try{ r = await fetch(url, { headers:{ Authorization:'Bearer '+token } }); }
+  catch(e){ throw new Error('中継先に接続できませんでした。中継URLとWorkerの設定を確認してください'); }
+  if(!r.ok) throw new Error(`ダウンロード失敗 ${r.status} ${await r.text().catch(()=>'')}`);
   const total = +r.headers.get('content-length') || 0;
   const reader = r.body.getReader(); const chunks=[]; let got=0;
   for(;;){ const {done,value}=await reader.read(); if(done) break; chunks.push(value); got+=value.length; onp(got,total); }
@@ -385,7 +401,7 @@ $('buildBtn').onclick = async () => {
 
     let totalBytes=0;
     for(let i=0;i<sel.length;i++){
-      const data = await download(`${sel[i].baseUrl}=dv`, (g,t)=>{
+      const data = await download(px(`${sel[i].baseUrl}=dv`), (g,t)=>{
         setBuild((i + (t? g/t : 0.5))/sel.length*0.5, `ダウンロード中 ${i+1}/${sel.length} … ${fmtBytes(g)}${t?' / '+fmtBytes(t):''}`);
       });
       totalBytes += data.length;
