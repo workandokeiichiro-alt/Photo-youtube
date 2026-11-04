@@ -185,8 +185,10 @@ $('saveClient').onclick = () => {
 };
 // Googleフォトの画像・動画URLを中継経由にする
 function px(u){
-  const p = ($('proxyUrl').value||'').trim().replace(/\/+$/,'');
+  let p = ($('proxyUrl').value||'').trim().replace(/\/+$/,'');
   if(!p){ $('settingsBox').open=true; throw new Error('初期設定で中継URLを設定してください'); }
+  if(!/^https?:\/\//i.test(p)) p = 'https://' + p; // https:// の付け忘れを補う
+  if(new URL(p).origin === location.origin){ $('settingsBox').open=true; throw new Error('中継URLが正しくありません(Cloudflare WorkerのURLを入れてください)'); }
   return `${p}/?url=${encodeURIComponent(u)}`;
 }
 $('date').value = localDate(new Date());
@@ -372,7 +374,11 @@ async function download(url, onp){
   let r;
   try{ r = await fetch(url, { headers:{ Authorization:'Bearer '+token } }); }
   catch(e){ throw new Error('中継先に接続できませんでした。中継URLとWorkerの設定を確認してください'); }
-  if(!r.ok) throw new Error(`ダウンロード失敗 ${r.status} ${await r.text().catch(()=>'')}`);
+  if(!r.ok){
+    const body = (await r.text().catch(()=>'')).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,200);
+    log(`download ${r.status}: ${url} ${body}`);
+    throw new Error(`ダウンロード失敗 ${r.status}(詳細は処理ログ)`);
+  }
   const total = +r.headers.get('content-length') || 0;
   const reader = r.body.getReader(); const chunks=[]; let got=0;
   for(;;){ const {done,value}=await reader.read(); if(done) break; chunks.push(value); got+=value.length; onp(got,total); }
@@ -459,7 +465,8 @@ $('buildBtn').onclick = async () => {
     await ffReset(); // メモリ解放
   }catch(e){
     setBuild(0, '');
-    $('buildMsg').innerHTML = '<span class="warn">'+e.message+'</span>';
+    $('buildMsg').innerHTML = '<span class="warn"></span>';
+    $('buildMsg').firstChild.textContent = e.message;
     log('build error: '+e.message);
     await ffReset();
   }finally{ $('buildBtn').disabled=false; }
