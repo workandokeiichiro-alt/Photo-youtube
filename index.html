@@ -109,6 +109,7 @@
     <div id="encodeOpts" style="display:none">
       <label class="f">出力サイズ</label>
       <select id="orient">
+        <option value="auto">自動(縦・横の多い方に合わせる)</option>
         <option value="h">横長 1280×720</option>
         <option value="v">縦長 720×1280</option>
       </select>
@@ -393,7 +394,15 @@ async function probe(name){
   ffLogHook = null;
   const dm = txt.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
   const dur = dm ? (+dm[1])*3600 + (+dm[2])*60 + parseFloat(dm[3]) : 0;
-  return { dur, hasAudio: /Stream #\d+:\d+.*Audio:/.test(txt) };
+  // 映像の形式・サイズ・回転を調べる(縦横混在の判定用)
+  const vm = txt.match(/Video:\s*(\w+).*?\b(\d{2,5})x(\d{2,5})\b/);
+  const rm = txt.match(/rotation of (-?[\d.]+)/) || txt.match(/rotate\s*:\s*(-?\d+)/);
+  const rot = rm ? ((Math.round(parseFloat(rm[1])) % 360) + 360) % 360 : 0;
+  const w = vm ? +vm[2] : 0, h = vm ? +vm[3] : 0;
+  const sideways = rot === 90 || rot === 270;
+  const portrait = sideways ? w > h : h > w;
+  const sig = vm ? `${vm[1]}-${w}x${h}-${rot}` : 'unknown';
+  return { dur, hasAudio: /Stream #\d+:\d+.*Audio:/.test(txt), portrait, sig };
 }
 
 let outBlob=null, outUrl=null;
@@ -420,18 +429,33 @@ $('buildBtn').onclick = async () => {
     log(`合計 ${fmtBytes(totalBytes)}`);
     if(totalBytes > 1.6e9) log('※合計サイズが大きいため、メモリ不足で失敗する可能性があります');
 
+    setBuild(0.5,'動画情報を確認中…');
+    const info=[]; for(let i=0;i<sel.length;i++) info.push(await probe(`in${i}.mp4`));
+    log('動画情報: ' + info.map((x,i)=>`#${i+1} ${x.sig} ${x.portrait?'縦':'横'}`).join(' / '));
+
+    let mode = $('mode').value;
+    let switched = false;
+    if(mode==='copy' && new Set(info.map(x=>x.sig)).size > 1){
+      mode = 'encode'; switched = true;
+      log('向きや形式が違う動画があるため「画質をそろえて連結」に自動で切り替えました');
+    }
+
     let ret;
-    if($('mode').value==='copy'){
+    if(mode==='copy'){
       setBuild(0.6,'連結中…');
       const list = sel.map((_,i)=>`file 'in${i}.mp4'`).join('\n');
       await ff('write',{ name:'list.txt', data:new TextEncoder().encode(list) });
       ret = await ff('exec',{ argv:['-hide_banner','-f','concat','-safe','0','-i','list.txt','-c','copy','-movflags','+faststart','out.mp4'] });
       if(ret!==0) throw new Error('そのまま連結できませんでした(動画の形式が揃っていない可能性)。「画質をそろえて連結」を選んで再実行してください。');
     }else{
-      setBuild(0.5,'動画情報を確認中…');
-      const info=[]; for(let i=0;i<sel.length;i++) info.push(await probe(`in${i}.mp4`));
       const totalDur = info.reduce((s,x)=>s+x.dur,0) || 1;
-      const [W,H] = $('orient').value==='v' ? [720,1280] : [1280,720];
+      let o = $('orient').value;
+      if(o==='auto'){
+        const pDur = info.filter(x=>x.portrait).reduce((s,x)=>s+x.dur,0);
+        o = pDur > totalDur/2 ? 'v' : 'h';
+      }
+      const [W,H] = o==='v' ? [720,1280] : [1280,720];
+      log(`出力サイズ: ${W}×${H}`);
       const argv=['-hide_banner']; let fc=''; let parts='';
       sel.forEach((_,i)=>argv.push('-i',`in${i}.mp4`));
       info.forEach((x,i)=>{
@@ -447,7 +471,7 @@ $('buildBtn').onclick = async () => {
       ffLogHook = m => {
         const t = m.match(/time=(\d+):(\d+):([\d.]+)/);
         if(t){ const s=(+t[1])*3600+(+t[2])*60+parseFloat(t[3]);
-          setBuild(0.5+Math.min(1,s/totalDur)*0.5, `変換中… ${Math.round(s)}秒 / ${Math.round(totalDur)}秒(このタブは開いたままにしてください)`); }
+          setBuild(0.5+Math.min(1,s/totalDur)*0.5, `${switched?'縦横が混ざっているため画質をそろえて変換中':'変換中'}… ${Math.round(s)}秒 / ${Math.round(totalDur)}秒(このタブは開いたままにしてください)`); }
       };
       ret = await ff('exec',{ argv });
       ffLogHook = null;
