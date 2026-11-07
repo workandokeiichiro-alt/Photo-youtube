@@ -77,7 +77,8 @@
   <section class="card">
     <h2><span class="num">1</span>日付と動画を選ぶ</h2>
     <div class="row">
-      <div style="flex:0 0 180px"><label class="f">撮影日</label><input type="date" id="date"></div>
+      <div style="flex:0 0 180px"><label class="f">撮影日(開始)</label><input type="date" id="dateFrom"></div>
+      <div style="flex:0 0 180px"><label class="f">撮影日(終了)</label><input type="date" id="dateTo"></div>
       <div style="flex:1"></div>
     </div>
     <div class="row" style="margin-top:12px">
@@ -85,7 +86,7 @@
       <button class="primary" id="pickBtn" disabled>Googleフォトから選ぶ</button>
       <span id="authMsg" class="muted"></span>
     </div>
-    <p class="muted" style="margin-bottom:0">選択画面が別ウィンドウで開きます。その日付までスクロールして動画を選び「完了」を押してください(写真は自動で除外されます)。</p>
+    <p class="muted" style="margin-bottom:0">選択画面が別ウィンドウで開きます。期間内の動画を選び「完了」を押してください。多めに選んでも、期間外の動画と写真は自動で外れます。</p>
     <p id="pickMsg" class="muted"></p>
   </section>
 
@@ -192,10 +193,33 @@ function px(u){
   if(new URL(p).origin === location.origin){ $('settingsBox').open=true; throw new Error('中継URLが正しくありません(Cloudflare WorkerのURLを入れてください)'); }
   return `${p}/?url=${encodeURIComponent(u)}`;
 }
-$('date').value = localDate(new Date());
-function defaultTitle(){ const [y,m,d]=$('date').value.split('-').map(Number); return y?`${y}年${m}月${d}日`:''; }
+// 初期値:先週の月曜〜日曜
+(function(){
+  const t = new Date(); const dow = (t.getDay()+6)%7; // 月曜=0
+  const mon = new Date(t); mon.setDate(t.getDate()-dow-7);
+  const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+  $('dateFrom').value = localDate(mon); $('dateTo').value = localDate(sun);
+})();
+function range(){
+  let a=$('dateFrom').value, b=$('dateTo').value;
+  if(a && b && a>b) [a,b]=[b,a];
+  return [a,b];
+}
+function inRange(d){ const [a,b]=range(); const s=localDate(d); return (!a||s>=a) && (!b||s<=b); }
+function defaultTitle(){
+  const [a,b]=range(); if(!a) return '';
+  const f=s=>s.replace(/-/g,'/');
+  if(!b || a===b) return f(a);
+  return a.slice(0,4)===b.slice(0,4) ? `${f(a)}〜${f(b).slice(5)}` : `${f(a)}〜${f(b)}`;
+}
 $('title').value = defaultTitle();
-$('date').onchange = () => { $('title').value = defaultTitle(); render(); };
+function onRangeChange(){
+  $('title').value = defaultTitle();
+  items.forEach(it=>{ if(!it.notReady) it.include = inRange(new Date(it.createTime)); });
+  render();
+}
+$('dateFrom').onchange = onRangeChange;
+$('dateTo').onchange = onRangeChange;
 $('mode').onchange = () => { $('encodeOpts').style.display = $('mode').value==='encode'?'block':'none'; };
 
 /* ========== 認証 ========== */
@@ -274,7 +298,7 @@ $('pickBtn').onclick = async () => {
       const status = md.videoMetadata?.processingStatus;
       items.push({ id:m.id, createTime:m.createTime, filename:m.mediaFile?.filename||'video',
         baseUrl:m.mediaFile?.baseUrl, width:md.width, height:md.height,
-        include: status ? status==='READY' : true, notReady: status && status!=='READY', thumb:null });
+        include: (status ? status==='READY' : true) && inRange(new Date(m.createTime)), notReady: status && status!=='READY', thumb:null });
       added++;
     }
     items.sort((a,b)=> new Date(a.createTime)-new Date(b.createTime));
@@ -302,7 +326,6 @@ async function loadThumbs(){
 /* ========== 一覧表示 ========== */
 function render(){
   const list = $('list'); list.innerHTML='';
-  const day = $('date').value;
   if(!items.length){ list.innerHTML='<p class="muted">まだ動画がありません。</p>'; }
   items.forEach((it,i)=>{
     const d = new Date(it.createTime);
@@ -315,7 +338,7 @@ function render(){
     const sub = document.createElement('div'); sub.className='muted';
     sub.textContent = `${d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` +
       (it.width?` ・ ${it.width}×${it.height}`:'');
-    if(day && localDate(d)!==day){ const b=document.createElement('span'); b.className='badge'; b.textContent='別の日'; sub.appendChild(b); }
+    if(!inRange(d)){ const b=document.createElement('span'); b.className='badge'; b.textContent='期間外'; sub.appendChild(b); }
     if(it.notReady){ const b=document.createElement('span'); b.className='badge'; b.textContent='処理中'; sub.appendChild(b); }
     meta.append(fn, sub);
     const ord = document.createElement('div'); ord.className='ord';
@@ -483,7 +506,7 @@ $('buildBtn').onclick = async () => {
     if(outUrl) URL.revokeObjectURL(outUrl);
     outUrl = URL.createObjectURL(outBlob);
     $('preview').src = outUrl; $('preview').style.display='block';
-    $('dlLink').href = outUrl; $('dlLink').download = `${$('date').value||'video'}.mp4`; $('dlWrap').style.display='block';
+    $('dlLink').href = outUrl; $('dlLink').download = `${range().filter(Boolean).join('_')||'video'}.mp4`; $('dlWrap').style.display='block';
     setBuild(1, `完成しました(${fmtBytes(outBlob.size)})。プレビューを確認してアップしてください。`);
     $('uploadBtn').disabled=false;
     await ffReset(); // メモリ解放
